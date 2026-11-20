@@ -49,15 +49,15 @@ def test_first_batch_separate_event_and_pdf(admin):
     reader = PdfReader(BytesIO(first.content))
     text = reader.pages[0].extract_text()
     assert 'Иван Примеров' in text and 'БИЛЕТ № 1' in text and '0001' not in text and 'Тестовый город' in text
-    assert '20 декабря (вс) начало 11:00' in text
-    assert 'АНГЛИЯ' in text and 'МАЛАЙЗИЯ' in text
-    assert len(reader.pages[0].images) == 11  # Ten flags and original speaker photo.
-    assert float(reader.pages[0].mediabox.width) == 1264
-    assert float(reader.pages[0].mediabox.height) == 669
+    assert '20 декабря (вс) 11:00' in text
+    assert len(reader.pages) == 2
+    assert 'QR-код' in reader.pages[1].extract_text()
+    assert float(reader.pages[0].mediabox.width) == 1254
+    assert float(reader.pages[0].mediabox.height) == 705.75
     font_objects = reader.pages[0]['/Resources']['/Font']
     assert any('/FontFile2' in f.get_object().get('/FontDescriptor',{}) for f in font_objects.values() if '/FontDescriptor' in f.get_object())
     combined = admin.get(f"/api/batches/{batch['batch']}/pdf")
-    assert len(PdfReader(BytesIO(combined.content)).pages) == 3
+    assert len(PdfReader(BytesIO(combined.content)).pages) == 6
     zipped = admin.get(f"/api/batches/{batch['batch']}/zip")
     with ZipFile(BytesIO(zipped.content)) as z:
         assert len(z.namelist()) == 3
@@ -132,7 +132,7 @@ def test_unicode_search_csv_and_long_name(admin):
     export=admin.get('/api/tickets/export').content.decode('utf-8-sig')
     assert "'=FORMULA" in export
     pdf=admin.get(f"/api/tickets/{b['tickets'][0]['id']}/pdf").content
-    assert len(PdfReader(BytesIO(pdf)).pages)==1
+    assert len(PdfReader(BytesIO(pdf)).pages)==2
 
 def test_login_limit_and_browser_origin():
     c=TestClient(app)

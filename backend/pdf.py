@@ -9,6 +9,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.colors import HexColor, white
 
 ASSETS = Path(__file__).resolve().parents[1] / 'assets' / 'ticket'
+QR_IMAGE = ASSETS.parents[1] / 'data' / 'ticket-qr.png'
 FONT_LOCK = threading.Lock()
 
 def register_fonts():
@@ -26,62 +27,66 @@ def register_fonts():
 def pdf_bytes(tickets):
     register_fonts()
     output = BytesIO()
-    c = canvas.Canvas(output, pagesize=(1264, 669), invariant=1)
+    page_width, page_height = 1254, 705.75
+    layout_width, layout_height = 850, 478
+    c = canvas.Canvas(output, pagesize=(page_width, page_height), invariant=1)
     c.setTitle('Destination — именные билеты')
-    navy, red = HexColor('#062b53'), HexColor('#f20b3e')
-    def centered(x, baseline, value, size, font='DestinationBold', color=navy, width=800):
-        value = str(value)
-        while pdfmetrics.stringWidth(value, font, size) > width: size -= .25
-        c.setFillColor(color); c.setFont(font, size)
-        c.drawCentredString(x, 669-baseline, value)
+    navy, red = HexColor('#0a2446'), HexColor('#ab1234')
+
+    def draw_text(x, baseline, value, size, width, *, font='DestinationBold', color=navy, align='center'):
+        text_width = pdfmetrics.stringWidth(value, font, size)
+        if text_width > width:
+            size *= width / text_width
+        c.setFillColor(color)
+        c.setFont(font, size)
+        draw = c.drawCentredString if align == 'center' else c.drawString
+        draw(x, layout_height - baseline, value)
+
+    def wrap_text(value, size, width, font):
+        measure = lambda line: pdfmetrics.stringWidth(line, font, size)
+        words = value.split()
+        if len(words) < 2 or measure(value) <= width:
+            return [value]
+        pairs = [(' '.join(words[:i]), ' '.join(words[i:])) for i in range(1, len(words))]
+        return min(pairs, key=lambda pair: max(map(measure, pair)))
+
     months = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря']
     weekdays = ['пн','вт','ср','чт','пт','сб','вс']
-    countries = ['АНГЛИЯ','США','КАНАДА','ЧЕХИЯ','ВЕНГРИЯ','ГЕРМАНИЯ','ИТАЛИЯ','КИТАЙ','КОРЕЯ','МАЛАЙЗИЯ']
     for t in tickets:
         e = t.snapshot
-        c.setFillColor(white); c.rect(0, 0, 1264, 669, fill=1, stroke=0)
-        for i, (x, country) in enumerate(zip([62,190,314,444,568,696,824,952,1080,1214], countries)):
-            centered(x, 20, country, 15, 'Destination', HexColor('#111111'), 112)
-            c.drawImage(str(ASSETS / f'flag-{i}.png'), x-28, 669-89, 57, 60)
-        centered(435, 168, 'ПРЕЗЕНТАЦИЯ', 48, width=790)
-        centered(425, 210, 'ВЫСШЕЕ ОБРАЗОВАНИЕ ЗА РУБЕЖОМ', 34, color=red, width=770)
-        centered(444, 324, f'БИЛЕТ № {t.number}', 40, 'DestinationBI', HexColor('#004878'), 730)
-        name_size = 36
-        name_lines = [t.name]
-        if pdfmetrics.stringWidth(t.name, 'DestinationBI', name_size) > 740:
-            name_size = 30
-            while True:
-                name_lines, line = [], ''
-                # Character-based fitting also handles a long unbroken surname.
-                words = t.name.split()
-                for word in words:
-                    if pdfmetrics.stringWidth((line+' '+word).strip(), 'DestinationBI', name_size) <= 740:
-                        line = (line+' '+word).strip()
-                    else:
-                        if line: name_lines.append(line)
-                        line = ''
-                        for char in word:
-                            if pdfmetrics.stringWidth(line+char, 'DestinationBI', name_size) > 740:
-                                name_lines.append(line); line = ''
-                            line += char
-                if line: name_lines.append(line)
-                if len(name_lines) <= 3: break
-                name_size -= 1
-        for i, line in enumerate(name_lines):
-            centered(432, 415-(len(name_lines)-1-i)*(name_size+3), line, name_size, 'DestinationBI', HexColor('#26333e'), 740)
-        c.setStrokeColor(HexColor('#004878')); c.setLineWidth(1.5)
-        c.line(186, 669-428, 675, 669-428)
         d = date.fromisoformat(e['date'])
-        when = f'{d.day} {months[d.month-1]} ({weekdays[d.weekday()]}) начало {e["time"]}'
-        centered(432, 533, when, 34, color=red, width=785)
-        centered(432, 576, e['venue'], 32, width=780)
-        centered(432, 607, f'{e["city"]}, {e["address"]}', 18, 'Destination', width=790)
-        c.drawImage(str(ASSETS / 'speaker.png'), 869, 669-486, 321, 361)
-        centered(1025, 527, e['speaker'].upper(), 35, color=HexColor('#20252b'), width=340)
-        for baseline, line in [(552,'международный эксперт'), (575,'по образованию за рубежом'), (598,'с опытом более 20 лет')]:
-            centered(1025, baseline, line, 20, 'DestinationItalic', HexColor('#26333e'), 340)
-        centered(632, 651, 'Билет участвует в розыгрыше призов при личном присутствии', 11, 'Destination', HexColor('#68717a'), 1160)
-        if t.cancelled: centered(432, 470, 'ОТМЕНЁН', 28, color=red, width=730)
+        when = f'{d.day} {months[d.month-1]} ({weekdays[d.weekday()]}) {e["time"]}'
+        c.scale(page_width / layout_width, page_height / layout_height)
+        c.drawImage(str(ASSETS / 'final-ticket.png'), 0, 0, layout_width, layout_height)
+        draw_text(349, 236, f'БИЛЕТ № {t.number}', 29, 320)
+        name_lines = wrap_text(t.name, 23, 315, 'DestinationBI')
+        for i, line in enumerate(name_lines):
+            draw_text(349, 282 - (len(name_lines) - 1 - i) * 22, line, 23, 315, font='DestinationBI')
+        draw_text(260, 343, when, 23, 232, color=red, align='left')
+        draw_text(264, 369, e['venue'], 21, 236, align='left')
+        address = f'{e["city"]}, {e["address"]}'
+        address_lines = wrap_text(address, 14, 236, 'Destination')
+        for i, line in enumerate(address_lines):
+            baseline = 389 if len(address_lines) == 1 else 383 + i * 14
+            draw_text(264, baseline, line, 14, 236, font='Destination', align='left')
+        draw_text(715, 359, e['speaker'].upper(), 23, 224)
+        if t.cancelled:
+            draw_text(350, 422, 'ОТМЕНЁН', 22, 320, color=red)
+        c.showPage()
+        c.setFillColor(HexColor('#f5f7fa'))
+        c.rect(0, 0, page_width, page_height, fill=1, stroke=0)
+        c.setFillColor(red)
+        c.rect(page_width / 2 - 40, page_height - 95, 80, 4, fill=1, stroke=0)
+        c.setFillColor(navy)
+        c.setFont('DestinationBold', 34)
+        c.drawCentredString(page_width / 2, page_height - 150, 'QR-код')
+        c.setFillColor(white)
+        c.setStrokeColor(navy)
+        c.setLineWidth(1.75)
+        c.roundRect(page_width / 2 - 170, 105, 340, 340, 14, fill=1, stroke=1)
+        if QR_IMAGE.is_file():
+            c.drawImage(str(QR_IMAGE), page_width / 2 - 145, 130, 290, 290,
+                        preserveAspectRatio=True, anchor='c', mask='auto')
         c.showPage()
     c.save()
     return output.getvalue()

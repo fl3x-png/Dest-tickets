@@ -47,37 +47,66 @@ function App(){
  {cancelId&&<Modal title="Отменить билет?" onClose={()=>setCancelId(null)}><p>Билет станет недействительным. Его номер останется в реестре и не будет выдан повторно.</p><button className="primary" disabled={busy} onClick={doCancel}>Подтвердить отмену</button></Modal>}</div>;
 }
 
-function TicketPreview({event:e,name,number}:{event?:Event;name:string;number:string}){
- const countries=['АНГЛИЯ','США','КАНАДА','ЧЕХИЯ','ВЕНГРИЯ','ГЕРМАНИЯ','ИТАЛИЯ','КИТАЙ','КОРЕЯ','МАЛАЙЗИЯ'];
- const xs=[62,190,314,444,568,696,824,952,1080,1214];
- const d=e?new Date(e.date+'T00:00:00'):null;
- const months=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
- const days=['вс','пн','вт','ср','чт','пт','сб'];
- const when=d?`${d.getDate()} ${months[d.getMonth()]} (${days[d.getDay()]}) начало ${e!.time}`:'Дата и время мероприятия';
- const fit=(value:string,max:number,size:number)=>Math.min(size,max/Math.max(value.length,1)/.64);
- const nameLines:string[]=[];
- let line='';
- for(const word of name.split(/\s+/)){if((line+' '+word).trim().length>39&&line){nameLines.push(line);line=''}line=(line+' '+word).trim()}
- if(line)nameLines.push(line);
- const displayLines=nameLines.length<=3?nameLines:[name];
- return <div className="current-ticket-preview"><svg viewBox="0 0 1264 669" role="img" aria-label={`Предпросмотр билета № ${number}: ${name}`}>
- <rect width="1264" height="669" fill="white"/>
- {countries.map((country,i)=><g key={country}><text x={xs[i]} y="20" textAnchor="middle" fontSize="15" fill="#111">{country}</text><image href={`/api/ticket-assets/flag-${i}.png`} x={xs[i]-28} y="29" width="57" height="60"/></g>)}
- <g fill="#062b53" fontWeight="700" textAnchor="middle">
- <text x="435" y="168" fontSize="48">ПРЕЗЕНТАЦИЯ</text>
- <text x="425" y="210" fontSize="32" fill="#f20b3e">ВЫСШЕЕ ОБРАЗОВАНИЕ ЗА РУБЕЖОМ</text>
- <text x="444" y="324" fontSize="40" fontStyle="italic" fill="#004878">БИЛЕТ № {number}</text>
- {displayLines.map((part,i)=><text key={i} x="432" y={415-(displayLines.length-1-i)*33} fontSize={fit(part,740,displayLines.length>1?30:36)} fontStyle="italic" fill="#26333e">{part}</text>)}
- <path d="M186 428 H675" stroke="#004878" strokeWidth="1.5"/>
- <text x="432" y="533" fontSize={fit(when,785,34)} fill="#f20b3e">{when}</text>
- <text x="432" y="576" fontSize={fit(e?.venue||'Место проведения',780,32)}>{e?.venue||'Место проведения'}</text>
- <text x="432" y="607" fontWeight="400" fontSize={fit(e?`${e.city}, ${e.address}`:'Город и адрес',790,18)}>{e?`${e.city}, ${e.address}`:'Город и адрес'}</text>
- <image href="/api/ticket-assets/speaker.png" x="869" y="125" width="321" height="361"/>
- <text x="1025" y="527" fontSize={fit((e?.speaker||'Роман Лушаков').toUpperCase(),340,35)} fill="#20252b">{(e?.speaker||'Роман Лушаков').toUpperCase()}</text>
- </g>
- <g textAnchor="middle" fontStyle="italic" fontSize="20" fill="#26333e"><text x="1025" y="552">международный эксперт</text><text x="1025" y="575">по образованию за рубежом</text><text x="1025" y="598">с опытом более 20 лет</text></g>
- <text x="632" y="651" textAnchor="middle" fontSize="11" fill="#68717a">Билет участвует в розыгрыше призов при личном присутствии</text>
- </svg></div>;
+function TicketPreview({event, name, number}: {event?: Event; name: string; number: string}) {
+ const date = event ? new Date(event.date + 'T00:00:00') : null;
+ const months = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+ const days = ['вс','пн','вт','ср','чт','пт','сб'];
+ const when = date && event
+  ? `${date.getDate()} ${months[date.getMonth()]} (${days[date.getDay()]}) ${event.time}`
+  : 'Дата и время мероприятия';
+ const title = `БИЛЕТ № ${number}`;
+ const venue = event?.venue || 'Место проведения';
+ const address = event ? `${event.city}, ${event.address}` : 'Город и адрес';
+ const speaker = (event?.speaker || 'Роман Лушаков').toUpperCase();
+ const measure = document.createElement('canvas').getContext('2d');
+ const measureText = (value: string, size: number, weight: number, style: string) => {
+  if (!measure) return value.length * size * .65;
+  measure.font = `${style} ${weight} ${size}px Arial, sans-serif`;
+  return measure.measureText(value).width;
+ };
+ const fit = (value: string, width: number, size: number, weight = 700, style = 'normal') =>
+  Math.min(size, size * width / Math.max(1, measureText(value, size, weight, style)));
+ const wrap = (value: string, width: number, size: number, weight: number, style: string) => {
+  const words = value.trim().split(/\s+/);
+  if (words.length < 2 || measureText(value, size, weight, style) <= width) return [value];
+  let best = [value];
+  let bestWidth = Infinity;
+  for (let i = 1; i < words.length; i++) {
+   const pair = [words.slice(0, i).join(' '), words.slice(i).join(' ')];
+   const pairWidth = Math.max(...pair.map(line => measureText(line, size, weight, style)));
+   if (pairWidth < bestWidth) {
+    best = pair;
+    bestWidth = pairWidth;
+   }
+  }
+  return best;
+ };
+ const nameLines = wrap(name, 315, 23, 700, 'italic');
+ const addressLines = wrap(address, 236, 14, 400, 'normal');
+ return <div className="current-ticket-preview">
+  <svg viewBox="0 0 850 478" role="img" aria-label={`Предпросмотр билета № ${number}: ${name}`}>
+   <image href="/api/ticket-assets/final-ticket.png" width="850" height="478" preserveAspectRatio="none"/>
+   <g fill="#0a2446" fontWeight="700">
+    <text x="349" y="236" textAnchor="middle" fontSize={fit(title, 320, 29)}>{title}</text>
+    {nameLines.map((line, i) =>
+     <text key={i} x="349" y={282 - (nameLines.length - 1 - i) * 22} textAnchor="middle"
+      fontStyle="italic" fontSize={fit(line, 315, 23, 700, 'italic')}>{line}</text>)}
+    <text x="260" y="343" fill="#ab1234" fontSize={fit(when, 232, 23)}>{when}</text>
+    <text x="264" y="369" fontSize={fit(venue, 236, 21)}>{venue}</text>
+    {addressLines.map((line, i) =>
+     <text key={i} x="264" y={addressLines.length === 1 ? 389 : 383 + i * 14}
+      fontWeight="400" fontSize={fit(line, 236, 14, 400)}>{line}</text>)}
+    <text x="715" y="359" textAnchor="middle" fontSize={fit(speaker, 224, 23)}>{speaker}</text>
+   </g>
+  </svg>
+  <svg viewBox="0 0 1254 705.75" role="img" aria-label="Вторая страница билета с полем для QR-кода">
+   <rect width="1254" height="705.75" fill="#f5f7fa"/>
+   <rect x="587" y="91" width="80" height="4" fill="#ab1234"/>
+   <text x="627" y="150" textAnchor="middle" fill="#0a2446" fontWeight="700" fontSize="34">QR-код</text>
+   <rect x="457" y="260.75" width="340" height="340" rx="14" fill="white" stroke="#0a2446" strokeWidth="1.75"/>
+   <image x="482" y="285.75" width="290" height="290" href="/api/ticket-assets/ticket-qr.png"/>
+  </svg>
+ </div>;
 }
 
 function Login({onLogin}:{onLogin:(u:Person)=>void}){const [error,setError]=useState(''),[busy,setBusy]=useState(false);return <div className="login-screen"><section className="login-story"><div className="brand">destination<span className="brand-mark"><Plane/></span></div><span className="eyebrow">ОБРАЗОВАНИЕ БЕЗ ГРАНИЦ</span><h1>Билет в<br/>большое<br/>будущее<span>.</span></h1><p>Рабочее пространство команды Destination.<br/>Меньше рутины. Больше возможностей.</p><div className="login-line"/></section><form className="panel login-form" onSubmit={async e=>{e.preventDefault();setBusy(true);setError('');const data=Object.fromEntries(new FormData(e.currentTarget));try{onLogin(await api<Person>('/login','POST',data))}catch(e){setError((e as Error).message)}finally{setBusy(false)}}}><div className="eyebrow">DESTINATION TICKETS</div><h2>Добро пожаловать</h2><p>Войдите, чтобы управлять мероприятиями и билетами.</p>{error&&<div role="alert" className="error">{error}</div>}<label>Логин<input name="username" autoComplete="username" required maxLength={100}/></label><label>Пароль<input type="password" name="password" autoComplete="current-password" required maxLength={200}/></label><button className="primary full" disabled={busy}>{busy?'Входим…':'Войти в пространство'}<ArrowRight size={18}/></button><small>Доступ выдаёт администратор вашей команды.</small></form></div>}

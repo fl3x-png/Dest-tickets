@@ -47141,53 +47141,80 @@ function App() {
     ] })
   ] });
 }
-function TicketPreview({ event: e, name, number }) {
-  const countries = ["\u0410\u041D\u0413\u041B\u0418\u042F", "\u0421\u0428\u0410", "\u041A\u0410\u041D\u0410\u0414\u0410", "\u0427\u0415\u0425\u0418\u042F", "\u0412\u0415\u041D\u0413\u0420\u0418\u042F", "\u0413\u0415\u0420\u041C\u0410\u041D\u0418\u042F", "\u0418\u0422\u0410\u041B\u0418\u042F", "\u041A\u0418\u0422\u0410\u0419", "\u041A\u041E\u0420\u0415\u042F", "\u041C\u0410\u041B\u0410\u0419\u0417\u0418\u042F"];
-  const xs = [62, 190, 314, 444, 568, 696, 824, 952, 1080, 1214];
-  const d = e ? /* @__PURE__ */ new Date(e.date + "T00:00:00") : null;
+function TicketPreview({ event, name, number }) {
+  const date = event ? /* @__PURE__ */ new Date(event.date + "T00:00:00") : null;
   const months = ["\u044F\u043D\u0432\u0430\u0440\u044F", "\u0444\u0435\u0432\u0440\u0430\u043B\u044F", "\u043C\u0430\u0440\u0442\u0430", "\u0430\u043F\u0440\u0435\u043B\u044F", "\u043C\u0430\u044F", "\u0438\u044E\u043D\u044F", "\u0438\u044E\u043B\u044F", "\u0430\u0432\u0433\u0443\u0441\u0442\u0430", "\u0441\u0435\u043D\u0442\u044F\u0431\u0440\u044F", "\u043E\u043A\u0442\u044F\u0431\u0440\u044F", "\u043D\u043E\u044F\u0431\u0440\u044F", "\u0434\u0435\u043A\u0430\u0431\u0440\u044F"];
   const days = ["\u0432\u0441", "\u043F\u043D", "\u0432\u0442", "\u0441\u0440", "\u0447\u0442", "\u043F\u0442", "\u0441\u0431"];
-  const when = d ? `${d.getDate()} ${months[d.getMonth()]} (${days[d.getDay()]}) \u043D\u0430\u0447\u0430\u043B\u043E ${e.time}` : "\u0414\u0430\u0442\u0430 \u0438 \u0432\u0440\u0435\u043C\u044F \u043C\u0435\u0440\u043E\u043F\u0440\u0438\u044F\u0442\u0438\u044F";
-  const fit = (value, max, size) => Math.min(size, max / Math.max(value.length, 1) / 0.64);
-  const nameLines = [];
-  let line = "";
-  for (const word of name.split(/\s+/)) {
-    if ((line + " " + word).trim().length > 39 && line) {
-      nameLines.push(line);
-      line = "";
+  const when = date && event ? `${date.getDate()} ${months[date.getMonth()]} (${days[date.getDay()]}) ${event.time}` : "\u0414\u0430\u0442\u0430 \u0438 \u0432\u0440\u0435\u043C\u044F \u043C\u0435\u0440\u043E\u043F\u0440\u0438\u044F\u0442\u0438\u044F";
+  const title = `\u0411\u0418\u041B\u0415\u0422 \u2116 ${number}`;
+  const venue = event?.venue || "\u041C\u0435\u0441\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0434\u0435\u043D\u0438\u044F";
+  const address = event ? `${event.city}, ${event.address}` : "\u0413\u043E\u0440\u043E\u0434 \u0438 \u0430\u0434\u0440\u0435\u0441";
+  const speaker = (event?.speaker || "\u0420\u043E\u043C\u0430\u043D \u041B\u0443\u0448\u0430\u043A\u043E\u0432").toUpperCase();
+  const measure = document.createElement("canvas").getContext("2d");
+  const measureText = (value, size, weight, style) => {
+    if (!measure) return value.length * size * 0.65;
+    measure.font = `${style} ${weight} ${size}px Arial, sans-serif`;
+    return measure.measureText(value).width;
+  };
+  const fit = (value, width, size, weight = 700, style = "normal") => Math.min(size, size * width / Math.max(1, measureText(value, size, weight, style)));
+  const wrap = (value, width, size, weight, style) => {
+    const words = value.trim().split(/\s+/);
+    if (words.length < 2 || measureText(value, size, weight, style) <= width) return [value];
+    let best = [value];
+    let bestWidth = Infinity;
+    for (let i = 1; i < words.length; i++) {
+      const pair = [words.slice(0, i).join(" "), words.slice(i).join(" ")];
+      const pairWidth = Math.max(...pair.map((line) => measureText(line, size, weight, style)));
+      if (pairWidth < bestWidth) {
+        best = pair;
+        bestWidth = pairWidth;
+      }
     }
-    line = (line + " " + word).trim();
-  }
-  if (line) nameLines.push(line);
-  const displayLines = nameLines.length <= 3 ? nameLines : [name];
-  return /* @__PURE__ */ jsx("div", { className: "current-ticket-preview", children: /* @__PURE__ */ jsxs("svg", { viewBox: "0 0 1264 669", role: "img", "aria-label": `\u041F\u0440\u0435\u0434\u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440 \u0431\u0438\u043B\u0435\u0442\u0430 \u2116 ${number}: ${name}`, children: [
-    /* @__PURE__ */ jsx("rect", { width: "1264", height: "669", fill: "white" }),
-    countries.map((country, i) => /* @__PURE__ */ jsxs("g", { children: [
-      /* @__PURE__ */ jsx("text", { x: xs[i], y: "20", textAnchor: "middle", fontSize: "15", fill: "#111", children: country }),
-      /* @__PURE__ */ jsx("image", { href: `/api/ticket-assets/flag-${i}.png`, x: xs[i] - 28, y: "29", width: "57", height: "60" })
-    ] }, country)),
-    /* @__PURE__ */ jsxs("g", { fill: "#062b53", fontWeight: "700", textAnchor: "middle", children: [
-      /* @__PURE__ */ jsx("text", { x: "435", y: "168", fontSize: "48", children: "\u041F\u0420\u0415\u0417\u0415\u041D\u0422\u0410\u0426\u0418\u042F" }),
-      /* @__PURE__ */ jsx("text", { x: "425", y: "210", fontSize: "32", fill: "#f20b3e", children: "\u0412\u042B\u0421\u0428\u0415\u0415 \u041E\u0411\u0420\u0410\u0417\u041E\u0412\u0410\u041D\u0418\u0415 \u0417\u0410 \u0420\u0423\u0411\u0415\u0416\u041E\u041C" }),
-      /* @__PURE__ */ jsxs("text", { x: "444", y: "324", fontSize: "40", fontStyle: "italic", fill: "#004878", children: [
-        "\u0411\u0418\u041B\u0415\u0422 \u2116 ",
-        number
-      ] }),
-      displayLines.map((part, i) => /* @__PURE__ */ jsx("text", { x: "432", y: 415 - (displayLines.length - 1 - i) * 33, fontSize: fit(part, 740, displayLines.length > 1 ? 30 : 36), fontStyle: "italic", fill: "#26333e", children: part }, i)),
-      /* @__PURE__ */ jsx("path", { d: "M186 428 H675", stroke: "#004878", strokeWidth: "1.5" }),
-      /* @__PURE__ */ jsx("text", { x: "432", y: "533", fontSize: fit(when, 785, 34), fill: "#f20b3e", children: when }),
-      /* @__PURE__ */ jsx("text", { x: "432", y: "576", fontSize: fit(e?.venue || "\u041C\u0435\u0441\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0434\u0435\u043D\u0438\u044F", 780, 32), children: e?.venue || "\u041C\u0435\u0441\u0442\u043E \u043F\u0440\u043E\u0432\u0435\u0434\u0435\u043D\u0438\u044F" }),
-      /* @__PURE__ */ jsx("text", { x: "432", y: "607", fontWeight: "400", fontSize: fit(e ? `${e.city}, ${e.address}` : "\u0413\u043E\u0440\u043E\u0434 \u0438 \u0430\u0434\u0440\u0435\u0441", 790, 18), children: e ? `${e.city}, ${e.address}` : "\u0413\u043E\u0440\u043E\u0434 \u0438 \u0430\u0434\u0440\u0435\u0441" }),
-      /* @__PURE__ */ jsx("image", { href: "/api/ticket-assets/speaker.png", x: "869", y: "125", width: "321", height: "361" }),
-      /* @__PURE__ */ jsx("text", { x: "1025", y: "527", fontSize: fit((e?.speaker || "\u0420\u043E\u043C\u0430\u043D \u041B\u0443\u0448\u0430\u043A\u043E\u0432").toUpperCase(), 340, 35), fill: "#20252b", children: (e?.speaker || "\u0420\u043E\u043C\u0430\u043D \u041B\u0443\u0448\u0430\u043A\u043E\u0432").toUpperCase() })
+    return best;
+  };
+  const nameLines = wrap(name, 315, 23, 700, "italic");
+  const addressLines = wrap(address, 236, 14, 400, "normal");
+  return /* @__PURE__ */ jsxs("div", { className: "current-ticket-preview", children: [
+    /* @__PURE__ */ jsxs("svg", { viewBox: "0 0 850 478", role: "img", "aria-label": `\u041F\u0440\u0435\u0434\u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440 \u0431\u0438\u043B\u0435\u0442\u0430 \u2116 ${number}: ${name}`, children: [
+      /* @__PURE__ */ jsx("image", { href: "/api/ticket-assets/final-ticket.png", width: "850", height: "478", preserveAspectRatio: "none" }),
+      /* @__PURE__ */ jsxs("g", { fill: "#0a2446", fontWeight: "700", children: [
+        /* @__PURE__ */ jsx("text", { x: "349", y: "236", textAnchor: "middle", fontSize: fit(title, 320, 29), children: title }),
+        nameLines.map((line, i) => /* @__PURE__ */ jsx(
+          "text",
+          {
+            x: "349",
+            y: 282 - (nameLines.length - 1 - i) * 22,
+            textAnchor: "middle",
+            fontStyle: "italic",
+            fontSize: fit(line, 315, 23, 700, "italic"),
+            children: line
+          },
+          i
+        )),
+        /* @__PURE__ */ jsx("text", { x: "260", y: "343", fill: "#ab1234", fontSize: fit(when, 232, 23), children: when }),
+        /* @__PURE__ */ jsx("text", { x: "264", y: "369", fontSize: fit(venue, 236, 21), children: venue }),
+        addressLines.map((line, i) => /* @__PURE__ */ jsx(
+          "text",
+          {
+            x: "264",
+            y: addressLines.length === 1 ? 389 : 383 + i * 14,
+            fontWeight: "400",
+            fontSize: fit(line, 236, 14, 400),
+            children: line
+          },
+          i
+        )),
+        /* @__PURE__ */ jsx("text", { x: "715", y: "359", textAnchor: "middle", fontSize: fit(speaker, 224, 23), children: speaker })
+      ] })
     ] }),
-    /* @__PURE__ */ jsxs("g", { textAnchor: "middle", fontStyle: "italic", fontSize: "20", fill: "#26333e", children: [
-      /* @__PURE__ */ jsx("text", { x: "1025", y: "552", children: "\u043C\u0435\u0436\u0434\u0443\u043D\u0430\u0440\u043E\u0434\u043D\u044B\u0439 \u044D\u043A\u0441\u043F\u0435\u0440\u0442" }),
-      /* @__PURE__ */ jsx("text", { x: "1025", y: "575", children: "\u043F\u043E \u043E\u0431\u0440\u0430\u0437\u043E\u0432\u0430\u043D\u0438\u044E \u0437\u0430 \u0440\u0443\u0431\u0435\u0436\u043E\u043C" }),
-      /* @__PURE__ */ jsx("text", { x: "1025", y: "598", children: "\u0441 \u043E\u043F\u044B\u0442\u043E\u043C \u0431\u043E\u043B\u0435\u0435 20 \u043B\u0435\u0442" })
-    ] }),
-    /* @__PURE__ */ jsx("text", { x: "632", y: "651", textAnchor: "middle", fontSize: "11", fill: "#68717a", children: "\u0411\u0438\u043B\u0435\u0442 \u0443\u0447\u0430\u0441\u0442\u0432\u0443\u0435\u0442 \u0432 \u0440\u043E\u0437\u044B\u0433\u0440\u044B\u0448\u0435 \u043F\u0440\u0438\u0437\u043E\u0432 \u043F\u0440\u0438 \u043B\u0438\u0447\u043D\u043E\u043C \u043F\u0440\u0438\u0441\u0443\u0442\u0441\u0442\u0432\u0438\u0438" })
-  ] }) });
+    /* @__PURE__ */ jsxs("svg", { viewBox: "0 0 1254 705.75", role: "img", "aria-label": "\u0412\u0442\u043E\u0440\u0430\u044F \u0441\u0442\u0440\u0430\u043D\u0438\u0446\u0430 \u0431\u0438\u043B\u0435\u0442\u0430 \u0441 \u043F\u043E\u043B\u0435\u043C \u0434\u043B\u044F QR-\u043A\u043E\u0434\u0430", children: [
+      /* @__PURE__ */ jsx("rect", { width: "1254", height: "705.75", fill: "#f5f7fa" }),
+      /* @__PURE__ */ jsx("rect", { x: "587", y: "91", width: "80", height: "4", fill: "#ab1234" }),
+      /* @__PURE__ */ jsx("text", { x: "627", y: "150", textAnchor: "middle", fill: "#0a2446", fontWeight: "700", fontSize: "34", children: "QR-\u043A\u043E\u0434" }),
+      /* @__PURE__ */ jsx("rect", { x: "457", y: "260.75", width: "340", height: "340", rx: "14", fill: "white", stroke: "#0a2446", strokeWidth: "1.75" }),
+      /* @__PURE__ */ jsx("image", { x: "482", y: "285.75", width: "290", height: "290", href: "/api/ticket-assets/ticket-qr.png" })
+    ] })
+  ] });
 }
 function Login({ onLogin }) {
   const [error, setError] = useState(""), [busy, setBusy] = useState(false);

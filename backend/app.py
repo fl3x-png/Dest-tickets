@@ -20,7 +20,7 @@ from sqlalchemy import select, update, func, or_
 from sqlalchemy.exc import IntegrityError
 from .db import get_db
 from .models import User, LoginSession, LoginAttempt, Event, Registration, IssueBatch, Ticket, AuditLog
-from .pdf import pdf_bytes, ASSETS
+from .pdf import pdf_bytes, ASSETS, QR_IMAGE
 
 app = FastAPI(title='Destination Tickets', docs_url=None, redoc_url=None)
 SECURE = os.getenv('COOKIE_SECURE', 'false').lower() == 'true'
@@ -340,7 +340,10 @@ def health(): return {'status': 'ok'}
 
 @app.get('/api/ticket-assets/{name}')
 def ticket_asset(name: str, user=Depends(current)):
-    allowed = {'speaker.png', *(f'flag-{i}.png' for i in range(10))}
+    if name == 'ticket-qr.png':
+        image = QR_IMAGE if QR_IMAGE.is_file() else ASSETS / 'blank.png'
+        return FileResponse(image, media_type='image/png', headers={'Cache-Control': 'no-store'})
+    allowed = {'final-ticket.png', 'speaker.png', *(f'flag-{i}.png' for i in range(10))}
     if name not in allowed:
         raise HTTPException(404, 'Изображение не найдено')
     return FileResponse(ASSETS / name, media_type='image/png')
