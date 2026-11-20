@@ -1,11 +1,13 @@
 .env
+.env.production
+backups/
 .venv/
 __pycache__/
 .pytest_cache/
 *.db
 *.db-*
 node_modules/
-frontend/dist/
+# Ship the tested browser build with the release for Windows office installations.
 *.tsbuildinfo
 *.log
 data/

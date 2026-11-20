@@ -7,6 +7,8 @@ import os
 import secrets
 import time
 import zipfile
+import re
+from urllib.parse import quote
 from datetime import date, time as clocktime
 from pathlib import Path
 from typing import Literal
@@ -18,7 +20,7 @@ from sqlalchemy import select, update, func, or_
 from sqlalchemy.exc import IntegrityError
 from .db import get_db
 from .models import User, LoginSession, LoginAttempt, Event, Registration, IssueBatch, Ticket, AuditLog
-from .pdf import pdf_bytes
+from .pdf import pdf_bytes, ASSETS
 
 app = FastAPI(title='Destination Tickets', docs_url=None, redoc_url=None)
 SECURE = os.getenv('COOKIE_SECURE', 'false').lower() == 'true'
@@ -171,7 +173,7 @@ def event_dict(e):
 @app.get('/api/events')
 def events(user=Depends(current), db=Depends(get_db)):
     totals = dict(db.execute(select(Ticket.event_id, func.count()).group_by(Ticket.event_id)).all())
-    return [{**event_dict(e), 'ticket_count': totals.get(e.id, 0)} for e in db.scalars(select(Event).order_by(Event.date, Event.time))]
+    return [{**event_dict(e), 'ticket_count': totals.get(e.id, 0)} for e in db.scalars(select(Event).where(Event.deleted.is_(False)).order_by(Event.date, Event.time))]
 
 @app.post('/api/events')
 def create_event(data: EventIn, user=Depends(admin), db=Depends(get_db)):
@@ -182,7 +184,7 @@ def create_event(data: EventIn, user=Depends(admin), db=Depends(get_db)):
 @app.put('/api/events/{eid}')
 def edit_event(eid: int, data: EventIn, user=Depends(admin), db=Depends(get_db)):
     # Conditional UPDATE serializes modifications with issuance on both databases.
-    query = update(Event).where(Event.id == eid)
+    query = update(Event).where(Event.id == eid, Event.deleted.is_(False))
     if data.capacity: query = query.where(Event.next_number-1 <= data.capacity)
     changed = db.execute(query.values(**data.model_dump(mode='json')).returning(Event.id)).scalar_one_or_none()
     if changed is None:
@@ -190,6 +192,16 @@ def edit_event(eid: int, data: EventIn, user=Depends(admin), db=Depends(get_db))
     e = db.get(Event, eid)
     audit(db, user, 'event.update', e.id); db.commit()
     return event_dict(e)
+
+@app.delete('/api/events/{eid}')
+def delete_event(eid: int, user=Depends(admin), db=Depends(get_db)):
+    changed = db.execute(update(Event).where(Event.id == eid, Event.deleted.is_(False)).values(deleted=True, status='closed').returning(Event.id)).scalar_one_or_none()
+    if changed is not None:
+        audit(db, user, 'event.delete', eid)
+        db.commit()
+    elif db.get(Event, eid) is None:
+        raise HTTPException(404, 'Мероприятие не найдено')
+    return {'ok': True}
 
 class IssueIn(BaseModel):
     event_id: int = Field(gt=0)
@@ -211,7 +223,7 @@ class IssueIn(BaseModel):
 
 def ticket_dict(t, db):
     r, u = db.get(Registration, t.registration_id), db.get(User, t.created_by)
-    return {'id': t.id, 'event_id': t.event_id, 'registration_id': t.registration_id, 'number': f'{t.number:04d}', 'name': t.name, 'phone': r.phone, 'manager': u.name, 'created_at': t.created_at, 'cancelled': t.cancelled, 'event': t.snapshot}
+    return {'id': t.id, 'event_id': t.event_id, 'registration_id': t.registration_id, 'number': f'{t.number}', 'name': t.name, 'phone': r.phone, 'manager': u.name, 'created_at': t.created_at, 'cancelled': t.cancelled, 'event': t.snapshot}
 
 @app.post('/api/tickets')
 def issue(data: IssueIn, idempotency_key: str = Header(min_length=16, max_length=100), user=Depends(current), db=Depends(get_db)):
@@ -224,7 +236,7 @@ def issue(data: IssueIn, idempotency_key: str = Header(min_length=16, max_length
     if batch: return existing(batch)
     try:
         # A single UPDATE reserves the whole range and locks the event in SQLite and PostgreSQL.
-        number = db.execute(update(Event).where(Event.id == data.event_id, Event.status == 'open', or_(Event.capacity.is_(None), Event.next_number + len(data.names)-1 <= Event.capacity)).values(next_number=Event.next_number+len(data.names)).returning(Event.next_number)).scalar_one_or_none()
+        number = db.execute(update(Event).where(Event.id == data.event_id, Event.deleted.is_(False), Event.status == 'open', or_(Event.capacity.is_(None), Event.next_number + len(data.names)-1 <= Event.capacity)).values(next_number=Event.next_number+len(data.names)).returning(Event.next_number)).scalar_one_or_none()
         if number is None:
             raise HTTPException(409, 'Регистрация закрыта, мероприятие не найдено или превышена вместимость')
         e = db.get(Event, data.event_id)
@@ -255,7 +267,7 @@ def ticket_query(event_id=None, q='', status='all'):
     return query.order_by(Ticket.id.desc())
 
 def matching(db, event_id, q, status):
-    return [t for t in db.scalars(ticket_query(event_id, q, status)) if not q or q.casefold() in t.name.casefold() or q in f'{t.number:04d}']
+    return [t for t in db.scalars(ticket_query(event_id, q, status)) if not q or q.casefold() in t.name.casefold() or q in str(t.number) or (q.isdecimal() and int(q) == t.number)]
 
 @app.get('/api/tickets')
 def tickets(event_id: int | None = None, q: str = '', status: Literal['all','active','cancelled']='all', page: int=1, user=Depends(current), db=Depends(get_db)):
@@ -280,11 +292,22 @@ def get_ticket(tid, db):
     if not t: raise HTTPException(404, 'Билет не найден')
     return t
 
+def ticket_filename(t):
+    name = re.sub(r'[\x00-\x1f\x7f-\x9f\\/:*?"<>|]', ' ', t.name)
+    name = ' '.join(name.split()).strip(' .') or 'Участник'
+    # Keep the UTF-8 ZIP entry and the eventual Windows filename reasonably short.
+    while len(name.encode('utf-8')) > 180:
+        name = name[:-1]
+    return f'{t.number}. {name.rstrip(" .")}.pdf'
+
+def ticket_disposition(t):
+    return f"attachment; filename=\"ticket-{t.number}.pdf\"; filename*=UTF-8''{quote(ticket_filename(t), safe='')}"
+
 @app.get('/api/tickets/{tid}/pdf')
 def download(tid: int, user=Depends(current), db=Depends(get_db)):
     t = get_ticket(tid, db)
     result = pdf_bytes([t]); audit(db, user, 'ticket.download', t.id); db.commit()
-    return Response(result, media_type='application/pdf', headers={'Content-Disposition': f'attachment; filename=ticket-{t.event_id}-{t.number:04d}.pdf'})
+    return Response(result, media_type='application/pdf', headers={'Content-Disposition': ticket_disposition(t)})
 
 @app.get('/api/batches/{key}/{kind}')
 def batch_download(key: str, kind: Literal['pdf','zip'], user=Depends(current), db=Depends(get_db)):
@@ -294,10 +317,11 @@ def batch_download(key: str, kind: Literal['pdf','zip'], user=Depends(current), 
     else:
         output = io.BytesIO()
         with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
-            for t in rows: archive.writestr(f'ticket-{t.event_id}-{t.number:04d}.pdf', pdf_bytes([t]))
+            for t in rows: archive.writestr(ticket_filename(t), pdf_bytes([t]))
         result, mime = output.getvalue(), 'application/zip'
     audit(db, user, 'batch.download', rows[0].registration_id); db.commit()
-    return Response(result, media_type=mime, headers={'Content-Disposition':f'attachment; filename=tickets.{kind}'})
+    disposition = ticket_disposition(rows[0]) if kind == 'pdf' and len(rows) == 1 else f'attachment; filename=tickets.{kind}'
+    return Response(result, media_type=mime, headers={'Content-Disposition': disposition})
 
 @app.post('/api/tickets/{tid}/cancel')
 def cancel(tid: int, user=Depends(admin), db=Depends(get_db)):
@@ -314,8 +338,15 @@ def history(tid: int, user=Depends(current), db=Depends(get_db)):
 @app.get('/api/health')
 def health(): return {'status': 'ok'}
 
+@app.get('/api/ticket-assets/{name}')
+def ticket_asset(name: str, user=Depends(current)):
+    allowed = {'speaker.png', *(f'flag-{i}.png' for i in range(10))}
+    if name not in allowed:
+        raise HTTPException(404, 'Изображение не найдено')
+    return FileResponse(ASSETS / name, media_type='image/png')
+
 dist = Path(__file__).resolve().parents[1] / 'frontend/dist'
 if dist.exists():
     app.mount('/assets', StaticFiles(directory=dist/'assets'), name='assets')
     @app.get('/')
-    def index(): return FileResponse(dist/'index.html')
+    def index(): return FileResponse(dist/'index.html', headers={'Cache-Control': 'no-store'})

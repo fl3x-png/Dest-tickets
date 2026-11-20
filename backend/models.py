@@ -42,6 +42,7 @@ class Event(Base):
     capacity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default='draft')
     next_number: Mapped[int] = mapped_column(default=1)
+    deleted: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[str] = mapped_column(default=now)
     __table_args__ = (CheckConstraint("status IN ('draft','open','closed','completed')"), CheckConstraint('next_number > 0'))
 

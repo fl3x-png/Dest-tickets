@@ -2,12 +2,28 @@ from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from uuid import uuid4
 from zipfile import ZipFile
+from urllib.parse import unquote
 from fastapi.testclient import TestClient
 from pypdf import PdfReader
 from sqlalchemy import select
 from backend.app import app
 from backend.db import Session
 from backend.models import Event
+from backend.app import ticket_filename
+from types import SimpleNamespace
+
+def test_safe_ticket_filename():
+    assert ticket_filename(SimpleNamespace(number=1,name='Илья Примеров')) == '1. Илья Примеров.pdf'
+    name = ticket_filename(SimpleNamespace(number=8,name='../../Имя\\Фамилия:"?*<>|\r\n'))
+    assert not any(c in name for c in '/\\:"?*<>|\r\n')
+    assert name.startswith('8. ') and name.endswith('.pdf')
+    assert len(ticket_filename(SimpleNamespace(number=99,name='Д'*200)).encode('utf-8')) < 200
+
+def test_current_ticket_preview_assets(admin):
+    assert TestClient(app).get('/api/ticket-assets/speaker.png').status_code == 401
+    assert admin.get('/api/ticket-assets/speaker.png').headers['content-type'] == 'image/png'
+    assert admin.get('/api/ticket-assets/flag-9.png').status_code == 200
+    assert admin.get('/api/ticket-assets/other.png').status_code == 404
 
 def event(client, **changes):
     data = dict(title='Демонстрационная презентация',city='Тестовый город',date='2026-12-20',time='11:00',address='Вымышленная улица, 10',venue='Учебный зал',speaker='Тестовый спикер',status='open',capacity=None)
@@ -22,16 +38,22 @@ def issue(client, eid, names=None, key=None):
 def test_first_batch_separate_event_and_pdf(admin):
     e = event(admin)
     batch = issue(admin,e['id'],['Иван Примеров','Анна Примерова','Алексей Примеров']).json()
-    assert [t['number'] for t in batch['tickets']] == ['0001','0002','0003']
+    assert [t['number'] for t in batch['tickets']] == ['1','2','3']
     second = event(admin,city='Другой город')
-    assert issue(admin,second['id']).json()['tickets'][0]['number'] == '0001'
+    assert issue(admin,second['id']).json()['tickets'][0]['number'] == '1'
     t = batch['tickets'][0]
     first = admin.get(f"/api/tickets/{t['id']}/pdf")
     assert first.status_code == 200
+    assert unquote(first.headers['content-disposition'].split("filename*=UTF-8''")[1]) == '1. Иван Примеров.pdf'
     assert first.content == admin.get(f"/api/tickets/{t['id']}/pdf").content
     reader = PdfReader(BytesIO(first.content))
     text = reader.pages[0].extract_text()
-    assert 'ИВАН ПРИМЕРОВ' in text and '0001' in text and 'Тестовый город' in text
+    assert 'Иван Примеров' in text and 'БИЛЕТ № 1' in text and '0001' not in text and 'Тестовый город' in text
+    assert '20 декабря (вс) начало 11:00' in text
+    assert 'АНГЛИЯ' in text and 'МАЛАЙЗИЯ' in text
+    assert len(reader.pages[0].images) == 11  # Ten flags and original speaker photo.
+    assert float(reader.pages[0].mediabox.width) == 1264
+    assert float(reader.pages[0].mediabox.height) == 669
     font_objects = reader.pages[0]['/Resources']['/Font']
     assert any('/FontFile2' in f.get_object().get('/FontDescriptor',{}) for f in font_objects.values() if '/FontDescriptor' in f.get_object())
     combined = admin.get(f"/api/batches/{batch['batch']}/pdf")
@@ -39,6 +61,7 @@ def test_first_batch_separate_event_and_pdf(admin):
     zipped = admin.get(f"/api/batches/{batch['batch']}/zip")
     with ZipFile(BytesIO(zipped.content)) as z:
         assert len(z.namelist()) == 3
+        assert z.namelist() == ['1. Иван Примеров.pdf', '2. Анна Примерова.pdf', '3. Алексей Примеров.pdf']
         assert all(z.read(n).startswith(b'%PDF') for n in z.namelist())
 
 def test_idempotency_payload_conflict_and_cancel_number(admin):
@@ -49,7 +72,7 @@ def test_idempotency_payload_conflict_and_cancel_number(admin):
     assert issue(admin,e['id'],['Другой Участник'],key).status_code == 409
     tid=a.json()['tickets'][0]['id']
     assert admin.post(f'/api/tickets/{tid}/cancel').status_code == 200
-    assert issue(admin,e['id']).json()['tickets'][0]['number'] == '0002'
+    assert issue(admin,e['id']).json()['tickets'][0]['number'] == '2'
     history=admin.get(f'/api/tickets/{tid}/history').json()
     assert [h['action'] for h in history] == ['ticket.issue','ticket.cancel']
 
@@ -105,6 +128,7 @@ def test_unicode_search_csv_and_long_name(admin):
     b=issue(admin,eid,[name.strip(),'=FORMULA Тест']).json()
     assert admin.get('/api/tickets?q=длинное').json()['total']==1
     assert admin.get('/api/tickets?q=0002').json()['total']==1
+    assert admin.get('/api/tickets?q=2').json()['total']==1
     export=admin.get('/api/tickets/export').content.decode('utf-8-sig')
     assert "'=FORMULA" in export
     pdf=admin.get(f"/api/tickets/{b['tickets'][0]['id']}/pdf").content
@@ -116,3 +140,20 @@ def test_login_limit_and_browser_origin():
     for _ in range(10):
         assert c.post('/api/login',json={'username':'admin','password':'bad'},headers={'X-Requested-With':'Destination'}).status_code==401
     assert c.post('/api/login',json={'username':'admin','password':'bad'},headers={'X-Requested-With':'Destination'}).status_code==429
+
+def test_event_deletion_preserves_tickets_and_blocks_issuance(admin, manager):
+    e = event(admin)
+    batch = issue(admin, e['id']).json()
+    tid = batch['tickets'][0]['id']
+    assert manager.delete(f"/api/events/{e['id']}").status_code == 403
+    assert admin.delete(f"/api/events/{e['id']}").status_code == 200
+    assert admin.delete(f"/api/events/{e['id']}").status_code == 200
+    assert admin.get('/api/events').json() == []
+    assert issue(admin, e['id']).status_code == 409
+    assert admin.get(f'/api/tickets/{tid}/pdf').status_code == 200
+    assert admin.get('/api/tickets').json()['total'] == 1
+    assert admin.delete('/api/events/999999').status_code == 404
+    data = {k:v for k,v in e.items() if k not in ('id','created_at')}
+    assert admin.put(f"/api/events/{e['id']}", json=data).status_code == 409
+    with Session() as db:
+        assert db.get(Event, e['id']).next_number == 2
